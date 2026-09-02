@@ -1,0 +1,24 @@
+# Atmel Studio / avr-gcc build output
+[Dd]ebug/
+[Rr]elease/
+*.elf
+*.hex
+*.eep
+*.lss
+*.srec
+*.map
+*.o
+*.d
+*.a
+*.lst
+Makefile
+
+# Atmel Studio IDE / user state
+.vs/
+*.atsuo
+*.user
+*.cproj.user
+
+# OS
+Thumbs.db
+.DS_Store
