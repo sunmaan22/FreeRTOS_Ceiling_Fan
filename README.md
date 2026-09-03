@@ -1,44 +1,46 @@
 # FreeRTOS Fan — ATmega128
 
-A desk-fan controller with a countdown timer, built on **FreeRTOS Kernel V11.1.0** for the
-**ATmega128** (Atmel Studio 7 / avr-gcc).
+A ceiling-fan controller with a countdown timer and an ambient-light "good night"
+prompt, built on **FreeRTOS Kernel V11.1.0** for the **ATmega128** (Atmel Studio 7 / avr-gcc).
 
 * PWM fan with 9 speed levels (0–8)
-* Countdown timer in minutes (0–9999); fan stops and an alarm blinks when it reaches 0
+* Countdown timer (set in minutes 0–9999, shown down to the second); fan stops + alarm at 0
+* **Night mode**: a CDS light sensor; when it stays dark long enough the LCD asks whether to
+  turn the fan off
 * 4‑digit 7‑segment display, 16×2 character LCD, 8‑LED bar, 4 push buttons, buzzer
 
 ---
 
 ## 1. Behaviour
 
-| | |
+| Mode | What it does |
 |---|---|
-| **BASIC mode** | Adjust fan speed. If a timer is armed it counts down in the background. |
-| **TIMER_SET mode** | Edit the timer value (minutes). |
-| **ALARM** | Countdown hit 0 → fan off, FND shows `----` and the LED bar blinks. Dismiss with any key. |
+| **BASIC** | Adjust fan speed. An armed timer counts down in the background. |
+| **TIMER_SET** | Edit the timer value (minutes). |
+| **ALARM** | Countdown hit 0 → fan off, LED bar blinks, LCD `*** TIME UP ***`. Any key → BASIC. |
+| **NIGHT** | CDS confirmed dark → LCD `GOOD NIGHT` + `OFF? SW4=Y SW5=N`. SW4 turns the fan off, SW5 (or 30 s timeout) keeps it running. After a trigger the sensor is **ignored for 1 hour**. |
 
 ### Controls
 
-| Key | BASIC | TIMER_SET |
-|-----|-------|-----------|
-| **SW2** (PE4) | fan OFF (speed 0) | **+10 min** |
-| **SW3** (PE5) | speed **−** | **+1 min** |
-| **SW4** (PE6) | speed **+** | reset to 0 |
-| **SW5** (PE7) | enter TIMER_SET | apply value, return to BASIC (starts countdown) |
+| Key | BASIC | TIMER_SET | NIGHT |
+|-----|-------|-----------|-------|
+| **SW2** (PE4) | fan OFF (speed 0) | **+10 min** | — |
+| **SW3** (PE5) | speed **−** | **+1 min** | — |
+| **SW4** (PE6) | speed **+** | reset to 0 | **YES** — turn fan off |
+| **SW5** (PE7) | enter TIMER_SET | apply value → BASIC (starts countdown) | **NO** — keep running |
 
 * SW2/SW3/SW4 **auto‑repeat** while held (≈0.5 s delay, then ≈8/s).
-* In TIMER_SET the step **accelerates** while held: ×1 → ×10 (after ≈1 s) → ×100 (after ≈2.5 s),
-  so 9999 is reachable in a few seconds.
+* In TIMER_SET the step **accelerates** while held: ×1 → ×10 (after ≈1 s) → ×100 (after ≈2.5 s).
 * In ALARM, **any** key returns to BASIC.
 
 ### What each display shows
 
-| Output | BASIC (no timer) | BASIC (counting) | TIMER_SET | ALARM |
+| Output | BASIC / NIGHT | counting (armed) | TIMER_SET | ALARM |
 |---|---|---|---|---|
-| **FND** (4 digit) | `   N` speed | `NNNN` minutes left | `NNNN` set minutes *(blink)* | `----` *(blink)* |
+| **FND** (4 digit) | `   N` — **fan speed only, always** | `   N` | `   N` | `   N` |
 | **LED bar** (PB0–PB7) | speed 1–8 (fills from **PB7**) | speed 1–8 | speed 1–8 | all *(blink)* |
-| **LCD line 0** | `Wind speed : N/8` | `Wind speed : N/8` | `Wind speed : N/8` | `Wind speed : 0/8` |
-| **LCD line 1** | `Timer : OFF` | `Time left:NNNN m` | `Set timer:NNNN m` | `*** TIME  UP ***` |
+| **LCD line 0** | `RTOS Ceiling Fan` (NIGHT: `GOOD NIGHT`) | `RTOS Ceiling Fan` | `RTOS Ceiling Fan` | `RTOS Ceiling Fan` |
+| **LCD line 1** | `Timer : OFF` (NIGHT: `OFF? SW4=Y SW5=N`) | `Left MMMM:SS` | `Set  MMMM:00` | `*** TIME  UP ***` |
 
 ---
 
@@ -53,20 +55,22 @@ MCU: **ATmega128**, external **16 MHz** crystal, CKDIV8 fuse **off**.
 | LCD `R/W` | **PG1** | firmware holds it low (write‑only) |
 | LCD `E` | **PG2** | |
 | Buzzer | **PG3** | active‑high; **disabled in firmware** (`BUZZER_ENABLED 0`) |
-| LED bar | **PORTB** `PB0..PB7` | `PB7` = bottom of bar, active‑high |
+| LED bar | **PORTB** `PB0..PB7` | `PB7` = bottom of bar, **active‑low** on this board |
 | FND segments `a..dp` | **PORTC** `PC0=a … PC7=dp` | common **anode** → segment ON = **LOW** |
 | FND digit select | **PD4** (leftmost) … **PD7** (rightmost) | digit ON = **HIGH** |
 | Fan motor PWM | **PE3 / OC3A** | Timer3, 8‑bit Fast PWM, prescale /8 (≈7.8 kHz) |
 | `SW2..SW5` | **PE4..PE7** | active‑low, internal pull‑ups |
+| CDS light sensor | **PF1 / ADC1** | analog; dark = ADC below `CDS_DARK_LEVEL` |
 
 ```
                           ATmega128
    PORTA  PA0..PA7  ─────  LCD  D0..D7
-   PORTB  PB0..PB7  ─────  LED bar          (PB7 = bottom)
+   PORTB  PB0..PB7  ─────  LED bar          (PB7 = bottom, active low)
    PORTC  PC0..PC7  ─────  FND segments a..dp   (ON = LOW, common anode)
           PD4 PD5 PD6 PD7  FND digit 1 2 3 4    (ON = HIGH)
           PE3             ─ Motor PWM  (OC3A)
           PE4 PE5 PE6 PE7 ─ SW2 SW3 SW4 SW5     (pull-up, active low)
+          PF1             ─ CDS light sensor (ADC1)
           PG0 PG1 PG2     ─ LCD  RS  R/W  E
           PG3             ─ Buzzer
 ```
@@ -109,6 +113,7 @@ Key settings in `FreeRTOSConfig.h`:
 | `vBuzzerTask` | **3** | blocks on notification | `MIN+40` | On alarm: 5 × (200 ms on / 200 ms off) then disarm the timer. (Buzzer output muted.) |
 | `vAppTask`    | **2** | `xQueueReceive` (40 ms timeout) | `MIN+160` | The application: mode state machine, motor duty (`OCR3A`), 1‑second countdown, and building all display content. |
 | `vLcdTask`    | **1** | 60 ms, writes only on change | `MIN+90` | Render changed LCD rows to the HD44780 (PORTA + PG0/1/2). |
+| `vCdsTask`    | **1** | `vTaskDelayUntil` 1 s | `MIN+30` | Read ADC1 (PF1). Count consecutive "dark" seconds; after `CDS_DARK_CONFIRM` set `s_nightReq` and stop checking for `CDS_RECHECK_SEC` (1 h). |
 | *Idle*        | 0 | — | `MIN` | — |
 
 ### Inter‑task communication / shared state
@@ -119,7 +124,8 @@ Key settings in `FreeRTOSConfig.h`:
 | task notification | binary | `vAppTask` (`xTaskNotifyGive`) → `vBuzzerTask` (`ulTaskNotifyTake`) |
 | `s_seg[4]` | array, `taskENTER_CRITICAL` | `fnd_set()` (in `vAppTask`) → `vFndTask` |
 | `s_line[2][16]` + `s_dirty` | buffer + row bitmask, `taskENTER_CRITICAL` | `lcd_set_line()` (in `vAppTask`) → `vLcdTask` (redraws only dirty rows) |
-| `s_mode`, `s_armed` | `volatile uint8_t` (atomic on AVR) | `vAppTask` ↔ `vBuzzerTask` |
+| `s_mode`, `s_armed` | `volatile` (byte-atomic on AVR) | `vAppTask` ↔ `vBuzzerTask` |
+| `s_nightReq` | `volatile uint8_t` one-shot flag | `vCdsTask` → `vAppTask` (consumed only if in BASIC) |
 | `s_speed`, `s_totalMin`, `s_remain` | plain | `vAppTask` only |
 
 ---
@@ -135,8 +141,10 @@ Key settings in `FreeRTOSConfig.h`:
     v                                                              |
  vKeyTask ──KeyEvent──▶ xKeyQueue ──▶ vAppTask (state machine) ────┤
   debounce               (len 8)         |     ^                    |
-  auto-repeat                            |     | 1s tick accumulator|
-                                         |     | (tick deltas)      |
+  auto-repeat                            |     | 1s tick accumulator |
+                                         |     | (tick deltas)       |
+ [CDS PF1] ─▶ vCdsTask ──s_nightReq──────┤                          |
+   ADC1      1s, dark-debounce           |                          |
                    xTaskNotifyGive ◀─────┤                          |
                           |              |                          |
                           v          fnd_set()   ledbar() ──────▶ [LED bar PB0-7]
@@ -162,21 +170,33 @@ Key settings in `FreeRTOSConfig.h`:
         +----------------------+   SW5 press    +--------------------+
         |        BASIC         | -------------> |     TIMER_SET      |
         |  SW2 off / SW3 -     |               |  SW2 +10  SW3 +1    |
-        |  SW4 +  / SW5 -> set |               |  SW4 reset          |
-        |                      | <------------- |  SW5 apply+arm     |
-        +----------------------+   SW5 press    +--------------------+
-             |            ^
-             | every 1s, if armed:  s_remain--
-             | s_remain == 0
-             v
+        |  SW4 +  / SW5 -> set |  SW5 apply+arm |  SW4 reset          |
+        |                      | <------------- |  SW5 -> BASIC      |
+        +----------------------+                +--------------------+
+          |     |     ^
+          |     |     | SW4=yes (fan off) / SW5=no / 30s timeout
+          |     |     |
+          |     |   +--------------------+   s_nightReq (from vCdsTask,
+          |     +-->|       NIGHT        |   only while in BASIC)
+          |         |  LCD "GOOD NIGHT"  |
+          |         +--------------------+
+          |
+          | every 1s, if armed (BASIC or NIGHT):  s_remain--
+          | s_remain == 0
+          v
         +----------------------+
-        |        ALARM         |  fan off, FND "----", LED bar blink
+        |        ALARM         |  fan off, LED bar blink, LCD "TIME UP"
         |                      |  vBuzzerTask: 5 beeps (muted) then disarm
         +----------------------+
              | any key  /  buzzer pattern done
              v
            BASIC  (disarmed, speed 0)
 ```
+
+`vCdsTask` (independent of the state machine): every 1 s reads PF1. `CDS_DARK_CONFIRM`
+consecutive dark seconds → raise `s_nightReq` once, then ignore the sensor for
+`CDS_RECHECK_SEC` (1 h). `vAppTask` turns that request into a `BASIC → NIGHT` transition
+**only if it is currently in BASIC**.
 
 ### Speed → outputs
 
@@ -223,6 +243,11 @@ rtos_project/
 
 * Buzzer output is compiled out (`BUZZER_ENABLED 0`); the alarm *logic* still runs.
 * `heap_1`: no `vPortFree`; every task/queue is allocated once at boot.
-* Timer range: 0–9999 minutes (~166 h).
+* Timer range: 0–9999 minutes; counted down and displayed as `MMMM:SS`.
 * FND is common‑anode (`FND_SEG_ON_LOW 1`); digit select is active‑high
-  (`FND_DIG_ACTIVE_LOW 0`). Flip those in `board.h` for a different FND module.
+  (`FND_DIG_ACTIVE_LOW 0`); LED bar is active‑low (`LEDBAR_ACTIVE_HIGH 0`).
+  Flip these in `board.h` for different modules.
+* **CDS tuning** in `board.h`: `CDS_DARK_LEVEL` (ADC threshold, 0–1023),
+  `CDS_DARK_INVERT` (set to 1 if the divider makes *dark = higher* ADC),
+  `CDS_DARK_CONFIRM` (dark seconds before triggering), `CDS_RECHECK_SEC`
+  (lock-out after a trigger).

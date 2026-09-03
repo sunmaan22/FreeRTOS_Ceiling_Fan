@@ -1,13 +1,17 @@
 /*
- * main.c  -  ATmega128 + FreeRTOS 선풍기 + 타이머
+ * main.c  -  ATmega128 + FreeRTOS 실링팬 + 타이머 + 야간모드
  *
- *  [기본 모드]  SW2 선풍기 OFF / SW3 속도- / SW4 속도+ / SW5 타이머설정
- *  [타이머 설정] SW2 +10분 / SW3 +1분 / SW4 리셋 / SW5 확정→기본모드(카운트다운)
- *  [알람]        카운트다운 0 → (부저 옵션) + 화면 깜빡 → 정지 → 기본모드
+ *  [BASIC]      SW2 팬 OFF / SW3 속도- / SW4 속도+ / SW5 타이머설정
+ *  [TIMER_SET]  SW2 +10분(가속) / SW3 +1분(가속) / SW4 리셋 / SW5 확정→BASIC
+ *  [ALARM]      카운트다운 0 → 팬 정지 + LED바 깜빡 → 아무 키 → BASIC
+ *  [NIGHT]      CDS 가 N초 연속 어두움 확정 → "GOOD NIGHT" + 팬 끌지 확인
+ *                 SW4(PE6) = 예(팬 OFF) / SW5(PE7) = 아니오 / 30초 무응답 = 아니오
+ *                 확정 후 1시간 동안 CDS 재확인 안 함
  *
- *  FND    : 무타이머=속도숫자 / 타이머중=남은 분 / 설정중=설정 분(깜빡)
- *  LED 바 : 속도 1~8 (PB7 = 바닥). 알람 때 전체 깜빡.
- *  LCD    : L0 = "Wind speed : N/8" ,  L1 = 타이머 상태
+ *  FND : 풍속 숫자만 (0~8)
+ *  LED : 풍속 1~8 막대 (PB7 = 바닥)
+ *  LCD : L0 = "RTOS Ceiling Fan" (야간모드 시 "GOOD NIGHT")
+ *        L1 = 타이머 상태 (초 단위)  /  야간모드 시 확인 문구
  */
 #include <avr/io.h>
 #include <stdint.h>
@@ -28,20 +32,21 @@ enum { KEV_PRESS = 0, KEV_REPEAT };
 typedef struct { uint8_t sw; uint8_t type; } KeyEvent_t;
 
 /* ================= 앱 상태 ================= */
-typedef enum { MODE_BASIC, MODE_TIMER_SET, MODE_ALARM } Mode_t;
+typedef enum { MODE_BASIC, MODE_TIMER_SET, MODE_ALARM, MODE_NIGHT } Mode_t;
 
 static volatile Mode_t   s_mode  = MODE_BASIC;
 static uint8_t  s_speed    = 0;           /* 0..8 */
 static uint16_t s_totalMin = 0;           /* 타이머 설정값 (분, 0~9999) */
 static volatile uint8_t  s_armed = 0;
 static uint32_t s_remain  = 0;            /* 남은 초 */
+static volatile uint8_t  s_nightReq = 0;  /* vCdsTask → vAppTask : 야간모드 요청 */
 
 /* ================= 하드웨어 헬퍼 ================= */
 static void motor_pwm_init(void)
 {
     MOTOR_DDR |= (1 << MOTOR_BIT);
-    TCCR3A = (1 << COM3A1) | (1 << WGM30);      /* 비반전, Fast PWM 8bit */
-    TCCR3B = (1 << WGM32)  | (1 << CS31);       /* 분주 /8 */
+    TCCR3A = (1 << COM3A1) | (1 << WGM30);
+    TCCR3B = (1 << WGM32)  | (1 << CS31);       /* Fast PWM 8bit, /8 */
     OCR3A  = 0;
 }
 static void motor_set(uint8_t step)
@@ -70,7 +75,12 @@ static void ledbar(uint8_t n)              /* PB7 부터 아래로 n칸 */
 #endif
 }
 
-/* ================= 숫자 → 문자열 (4자리 0채움) ================= */
+/* ================= 문자열 헬퍼 ================= */
+static void put2(char *b, uint8_t v)
+{
+    b[0] = (char)('0' + (v / 10) % 10);
+    b[1] = (char)('0' + v % 10);
+}
 static void num4str(char *b, uint16_t v)
 {
     b[0] = (char)('0' + (v / 1000) % 10);
@@ -79,82 +89,63 @@ static void num4str(char *b, uint16_t v)
     b[3] = (char)('0' + v % 10);
 }
 
-/* ================= FND: 4자리 정수 ================= */
-static void fnd_num4(uint16_t v, uint8_t blankMask)
-{
-    uint8_t s[4];
-    s[0] = fnd_font((uint8_t)((v / 1000) % 10));
-    s[1] = fnd_font((uint8_t)((v / 100)  % 10));
-    s[2] = fnd_font((uint8_t)((v / 10)   % 10));
-    s[3] = fnd_font((uint8_t)(v % 10));
-    for (uint8_t i = 0; i < 4; i++)
-        if (blankMask & (1 << i)) s[i] = FND_BLANK;
-    fnd_set(s);
-}
-
 /* ================= 화면 갱신 ================= */
 static void update_display(uint8_t blink)
 {
     char l0[17], l1[17];
     uint8_t i;
-    uint16_t remMin = (uint16_t)((s_remain + 59u) / 60u);
+    uint16_t remMin = (uint16_t)(s_remain / 60u);
+    uint8_t  remSec = (uint8_t)(s_remain % 60u);
 
     for (i = 0; i < 16; i++) { l0[i] = ' '; l1[i] = ' '; }
     l0[16] = 0; l1[16] = 0;
 
-    /* ---------- FND + LED ---------- */
-    if (s_mode == MODE_BASIC && !s_armed)
+    /* ---------- FND : 풍속 숫자만 ---------- */
     {
         uint8_t s[4] = { FND_BLANK, FND_BLANK, FND_BLANK, fnd_font(s_speed) };
         fnd_set(s);
-        ledbar(s_speed);
-    }
-    else if (s_mode == MODE_BASIC && s_armed)
-    {
-        fnd_num4(remMin, 0);
-        ledbar(s_speed);
-    }
-    else if (s_mode == MODE_TIMER_SET)
-    {
-        fnd_num4(s_totalMin, blink ? 0x0F : 0x00);
-        ledbar(s_speed);
-    }
-    else /* MODE_ALARM */
-    {
-        uint8_t s[4];
-        uint8_t v = blink ? FND_DASH : FND_BLANK;
-        s[0] = s[1] = s[2] = s[3] = v;
-        fnd_set(s);
-        ledbar(blink ? 8 : 0);
     }
 
+    /* ---------- LED 바 : 풍속 ---------- */
+    if (s_mode == MODE_ALARM) ledbar(blink ? 8 : 0);
+    else                      ledbar(s_speed);
+
     /* ---------- LCD ---------- */
-    {                                            /* L0 : "Wind speed : 3/8" (16) */
-        const char *p = "Wind speed :  /8";
-        for (i = 0; p[i]; i++) l0[i] = p[i];
-        l0[13] = (char)('0' + s_speed);
-    }
-    if (s_mode == MODE_ALARM)
+    if (s_mode == MODE_NIGHT)
     {
-        const char *p = "*** TIME  UP ***";
-        for (i = 0; p[i]; i++) l1[i] = p[i];
-    }
-    else if (s_mode == MODE_TIMER_SET)
-    {
-        const char *p = "Set timer:0000 m";
-        for (i = 0; p[i]; i++) l1[i] = p[i];
-        num4str(&l1[10], s_totalMin);
-    }
-    else if (s_armed)
-    {
-        const char *p = "Time left:0000 m";
-        for (i = 0; p[i]; i++) l1[i] = p[i];
-        num4str(&l1[10], remMin);
+        const char *a = "GOOD NIGHT";
+        const char *b = "OFF? SW4=Y SW5=N";
+        for (i = 0; a[i]; i++) l0[i] = a[i];
+        for (i = 0; b[i]; i++) l1[i] = b[i];
     }
     else
     {
-        const char *p = "Timer : OFF";
-        for (i = 0; p[i]; i++) l1[i] = p[i];
+        const char *a = "RTOS Ceiling Fan";
+        for (i = 0; a[i]; i++) l0[i] = a[i];
+
+        if (s_mode == MODE_ALARM)
+        {
+            const char *p = "*** TIME  UP ***";
+            for (i = 0; p[i]; i++) l1[i] = p[i];
+        }
+        else if (s_mode == MODE_TIMER_SET)
+        {
+            const char *p = "Set  0000:00";
+            for (i = 0; p[i]; i++) l1[i] = p[i];
+            num4str(&l1[5], s_totalMin);
+        }
+        else if (s_armed)
+        {
+            const char *p = "Left 0000:00";
+            for (i = 0; p[i]; i++) l1[i] = p[i];
+            num4str(&l1[5], remMin);
+            put2(&l1[10], remSec);
+        }
+        else
+        {
+            const char *p = "Timer : OFF";
+            for (i = 0; p[i]; i++) l1[i] = p[i];
+        }
     }
 
     lcd_set_line(0, l0);
@@ -164,6 +155,22 @@ static void update_display(uint8_t blink)
 /* ================= 키 처리 ================= */
 static void handle_key(const KeyEvent_t *e)
 {
+    if (s_mode == MODE_NIGHT)
+    {
+        if (e->type != KEV_PRESS) return;
+        if (e->sw == KEY_SW4)          /* 예 → 팬 끔 */
+        {
+            s_speed = 0;
+            motor_set(0);
+            s_mode = MODE_BASIC;
+        }
+        else if (e->sw == KEY_SW5)     /* 아니오 → 그대로 */
+        {
+            s_mode = MODE_BASIC;
+        }
+        return;
+    }
+
     if (s_mode == MODE_ALARM)
     {
         s_armed = 0;
@@ -194,12 +201,12 @@ static void handle_key(const KeyEvent_t *e)
         static uint8_t rep = 0, repKey = 0xFF;
         uint16_t big;
 
-        if (e->type == KEV_PRESS)          rep = 0;
-        else if (e->sw == repKey)          { if (rep < 40) rep++; }
-        else                               rep = 0;
+        if (e->type == KEV_PRESS)   rep = 0;
+        else if (e->sw == repKey)   { if (rep < 40) rep++; }
+        else                        rep = 0;
         repKey = e->sw;
 
-        big = (rep >= 20) ? 100u : (rep >= 8) ? 10u : 1u;   /* 가속 배수 */
+        big = (rep >= 20) ? 100u : (rep >= 8) ? 10u : 1u;
 
         switch (e->sw)
         {
@@ -220,7 +227,62 @@ static void handle_key(const KeyEvent_t *e)
     }
 }
 
+/* ================= ADC (CDS) ================= */
+static uint16_t adc_read(uint8_t ch)
+{
+    ADMUX  = (uint8_t)((1 << REFS0) | (ch & 0x1F));   /* AVCC 기준 */
+    ADCSRA |= (1 << ADSC);
+    while (ADCSRA & (1 << ADSC));
+    return ADC;
+}
+
 /* ================= 태스크 ================= */
+static void vCdsTask(void *pv)
+{
+    uint16_t darkCnt = 0;
+    uint32_t cooldown = 0;
+    TickType_t next;
+
+    (void)pv;
+
+    DDRF  &= (uint8_t)~(1 << CDS_ADC_CH);             /* PF1 입력 */
+    PORTF &= (uint8_t)~(1 << CDS_ADC_CH);             /* 풀업 off */
+    ADCSRA = (1 << ADEN) | (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0);  /* enable, /128 */
+    (void)adc_read(CDS_ADC_CH);                       /* 첫 변환 버림 */
+
+    next = xTaskGetTickCount();
+    for (;;)
+    {
+        uint16_t v = adc_read(CDS_ADC_CH);
+#if CDS_DARK_INVERT
+        uint8_t dark = (v > CDS_DARK_LEVEL);
+#else
+        uint8_t dark = (v < CDS_DARK_LEVEL);
+#endif
+        if (cooldown > 0)
+        {
+            cooldown--;                              /* 이 루프 = 1초 */
+            darkCnt = 0;
+        }
+        else if (dark)
+        {
+            if (darkCnt < 60000) darkCnt++;
+            if (darkCnt >= CDS_DARK_CONFIRM)
+            {
+                s_nightReq = 1;
+                cooldown = CDS_RECHECK_SEC;          /* 1시간 재확인 금지 */
+                darkCnt = 0;
+            }
+        }
+        else
+        {
+            darkCnt = 0;
+        }
+
+        vTaskDelayUntil(&next, pdMS_TO_TICKS(1000));
+    }
+}
+
 static void vKeyTask(void *pv)
 {
     const uint8_t bit[4] = { SW2_BIT, SW3_BIT, SW4_BIT, SW5_BIT };
@@ -236,7 +298,7 @@ static void vKeyTask(void *pv)
     {
         for (uint8_t k = 0; k < 4; k++)
         {
-            uint8_t raw = (uint8_t)((SW_PIN >> bit[k]) & 1);   /* 1 = 안눌림 */
+            uint8_t raw = (uint8_t)((SW_PIN >> bit[k]) & 1);
             uint8_t pressed = (uint8_t)!raw;
             uint8_t s3, on, off;
 
@@ -293,6 +355,7 @@ static void vAppTask(void *pv)
     TickType_t prev;
     uint16_t   msAcc = 0;
     uint16_t   blinkCnt = 0;
+    uint8_t    nightSec = 0;
 
     (void)pv;
 
@@ -305,6 +368,13 @@ static void vAppTask(void *pv)
         if (xQueueReceive(xKeyQueue, &e, pdMS_TO_TICKS(40)) == pdTRUE)
             handle_key(&e);
 
+        /* CDS 야간모드 요청 (BASIC 일 때만 진입) */
+        if (s_nightReq)
+        {
+            s_nightReq = 0;
+            if (s_mode == MODE_BASIC) { s_mode = MODE_NIGHT; nightSec = 0; }
+        }
+
         {
             TickType_t now = xTaskGetTickCount();
             uint16_t   dt  = (uint16_t)(now - prev);
@@ -314,7 +384,10 @@ static void vAppTask(void *pv)
             while (msAcc >= configTICK_RATE_HZ)
             {
                 msAcc = (uint16_t)(msAcc - configTICK_RATE_HZ);
-                if (s_armed && s_mode == MODE_BASIC && s_remain > 0)
+
+                /* 카운트다운 (BASIC / NIGHT 에서 계속) */
+                if (s_armed && s_remain > 0 &&
+                    (s_mode == MODE_BASIC || s_mode == MODE_NIGHT))
                 {
                     s_remain--;
                     if (s_remain == 0)
@@ -325,11 +398,15 @@ static void vAppTask(void *pv)
                         xTaskNotifyGive(xBuzzerTask);
                     }
                 }
+
+                /* 야간모드 30초 무응답 → 아니오(그대로) */
+                if (s_mode == MODE_NIGHT && ++nightSec >= 30)
+                    s_mode = MODE_BASIC;
             }
         }
 
         blinkCnt++;
-        update_display((uint8_t)((blinkCnt / 6) & 1));   /* 약 250ms 주기 */
+        update_display((uint8_t)((blinkCnt / 6) & 1));
     }
 }
 
@@ -351,6 +428,7 @@ int main(void)
     xTaskCreate(vBuzzerTask, "BUZ", configMINIMAL_STACK_SIZE + 40,  NULL, 3, &xBuzzerTask);
     xTaskCreate(vAppTask,    "APP", configMINIMAL_STACK_SIZE + 160, NULL, 2, NULL);
     xTaskCreate(vLcdTask,    "LCD", configMINIMAL_STACK_SIZE + 90,  NULL, 1, NULL);
+    xTaskCreate(vCdsTask,    "CDS", configMINIMAL_STACK_SIZE + 30,  NULL, 1, NULL);
 
     vTaskStartScheduler();
 
