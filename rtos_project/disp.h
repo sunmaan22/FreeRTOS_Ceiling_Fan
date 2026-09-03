@@ -14,7 +14,7 @@
 /* 문자 (풍속 "NLEV" 표시용). 비트: a=0,b=1,c=2,d=3,e=4,f=5,g=6,dp=7 */
 #define FND_L       0x38     /* d,e,f */
 #define FND_E       0x79     /* a,d,e,f,g */
-#define FND_V       0x1C     /* c,d,e  (아래쪽 v 모양) */
+#define FND_V       0x3E     /* b,c,d,e,f  (꽉 찬 U 모양) */
 
 uint8_t fnd_font(uint8_t digit);
 void    fnd_set(const uint8_t seg[4]);          /* seg[0] = 맨 왼쪽 */
