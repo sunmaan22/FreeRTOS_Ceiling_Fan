@@ -1,22 +1,13 @@
 /*
  * main.c  -  ATmega128 + FreeRTOS 선풍기 + 타이머
  *
- *  [기본 모드]
- *    SW2 : 선풍기 OFF (속도 0)
- *    SW3 : 속도 1단계 감소  (0~8단계)
- *    SW4 : 속도 1단계 증가
- *    SW5 : 타이머 설정 모드로
- *  [타이머 설정 모드]  (총값 = 분, 0~9999)
- *    SW2 : +10분    SW3 : +1분    SW4 : 리셋(0)
- *    SW5 : 확정 → 기본 모드, 카운트다운 시작
- *  [알람]
- *    카운트다운 0 → 부저(옵션) + 화면 깜빡 → 선풍기 정지 → 기본 모드
+ *  [기본 모드]  SW2 선풍기 OFF / SW3 속도- / SW4 속도+ / SW5 타이머설정
+ *  [타이머 설정] SW2 +10분 / SW3 +1분 / SW4 리셋 / SW5 확정→기본모드(카운트다운)
+ *  [알람]        카운트다운 0 → (부저 옵션) + 화면 깜빡 → 정지 → 기본모드
  *
- *  표시
- *    FND : 무타이머=속도 숫자, 타이머중=남은 분, 설정중=설정 분(깜빡)
- *    LCD : L0 = 바람 세기,  L1 = 타이머 상태(남은 분 / OFF)
- *
- *  ※ tools/lcd_probe.c : LCD 배선 확인용 단독 테스트 (프로젝트에는 미포함)
+ *  FND    : 무타이머=속도숫자 / 타이머중=남은 분 / 설정중=설정 분(깜빡)
+ *  LED 바 : 속도 1~8 (PB7 = 바닥). 알람 때 전체 깜빡.
+ *  LCD    : L0 = "Wind speed : N/8" ,  L1 = 타이머 상태
  */
 #include <avr/io.h>
 #include <stdint.h>
@@ -39,11 +30,11 @@ typedef struct { uint8_t sw; uint8_t type; } KeyEvent_t;
 /* ================= 앱 상태 ================= */
 typedef enum { MODE_BASIC, MODE_TIMER_SET, MODE_ALARM } Mode_t;
 
-static volatile Mode_t   s_mode  = MODE_BASIC;   /* vAppTask + vBuzzerTask 공유 */
+static volatile Mode_t   s_mode  = MODE_BASIC;
 static uint8_t  s_speed    = 0;           /* 0..8 */
 static uint16_t s_totalMin = 0;           /* 타이머 설정값 (분, 0~9999) */
-static volatile uint8_t  s_armed = 0;     /* vAppTask + vBuzzerTask 공유 */
-static uint32_t s_remain  = 0;            /* 남은 초 (vAppTask 전용) */
+static volatile uint8_t  s_armed = 0;
+static uint32_t s_remain  = 0;            /* 남은 초 */
 
 /* ================= 하드웨어 헬퍼 ================= */
 static void motor_pwm_init(void)
@@ -66,6 +57,18 @@ static void buzzer(uint8_t on)
     (void)on;
 #endif
 }
+static void ledbar(uint8_t n)              /* PB7 부터 아래로 n칸 */
+{
+    uint8_t mask;
+    if (n == 0)      mask = 0x00;
+    else if (n >= 8) mask = 0xFF;
+    else             mask = (uint8_t)~((uint8_t)((1u << (8 - n)) - 1u));
+#if LEDBAR_ACTIVE_HIGH
+    LEDBAR_PORT = mask;
+#else
+    LEDBAR_PORT = (uint8_t)~mask;
+#endif
+}
 
 /* ================= 숫자 → 문자열 (4자리 0채움) ================= */
 static void num4str(char *b, uint16_t v)
@@ -76,7 +79,7 @@ static void num4str(char *b, uint16_t v)
     b[3] = (char)('0' + v % 10);
 }
 
-/* ================= FND: 4자리 정수 (0000~9999) ================= */
+/* ================= FND: 4자리 정수 ================= */
 static void fnd_num4(uint16_t v, uint8_t blankMask)
 {
     uint8_t s[4];
@@ -94,24 +97,27 @@ static void update_display(uint8_t blink)
 {
     char l0[17], l1[17];
     uint8_t i;
-    uint16_t remMin = (uint16_t)((s_remain + 59u) / 60u);   /* 남은 분(올림) */
+    uint16_t remMin = (uint16_t)((s_remain + 59u) / 60u);
 
     for (i = 0; i < 16; i++) { l0[i] = ' '; l1[i] = ' '; }
     l0[16] = 0; l1[16] = 0;
 
-    /* ---------- FND ---------- */
+    /* ---------- FND + LED ---------- */
     if (s_mode == MODE_BASIC && !s_armed)
     {
         uint8_t s[4] = { FND_BLANK, FND_BLANK, FND_BLANK, fnd_font(s_speed) };
         fnd_set(s);
+        ledbar(s_speed);
     }
     else if (s_mode == MODE_BASIC && s_armed)
     {
         fnd_num4(remMin, 0);
+        ledbar(s_speed);
     }
     else if (s_mode == MODE_TIMER_SET)
     {
-        fnd_num4(s_totalMin, blink ? 0x0F : 0x00);   /* 전체 깜빡 = 설정중 */
+        fnd_num4(s_totalMin, blink ? 0x0F : 0x00);
+        ledbar(s_speed);
     }
     else /* MODE_ALARM */
     {
@@ -119,6 +125,7 @@ static void update_display(uint8_t blink)
         uint8_t v = blink ? FND_DASH : FND_BLANK;
         s[0] = s[1] = s[2] = s[3] = v;
         fnd_set(s);
+        ledbar(blink ? 8 : 0);
     }
 
     /* ---------- LCD ---------- */
@@ -239,7 +246,7 @@ static void vKeyTask(void *pv)
             else if (down[k] && on && k != KEY_SW5)
             {
                 held[k]++;
-                if (held[k] >= 50 && ((held[k] - 50) % 12) == 0)   /* 500ms 후 120ms 간격 */
+                if (held[k] >= 50 && ((held[k] - 50) % 12) == 0)
                 {
                     KeyEvent_t e = { k, KEV_REPEAT };
                     xQueueSend(xKeyQueue, &e, 0);
@@ -317,18 +324,21 @@ static void vAppTask(void *pv)
 /* ================= main ================= */
 int main(void)
 {
-    DDRE  &= ~((1 << SW2_BIT) | (1 << SW3_BIT) | (1 << SW4_BIT) | (1 << SW5_BIT));  /* SW 입력 */
-    PORTE |=  (1 << SW2_BIT) | (1 << SW3_BIT) | (1 << SW4_BIT) | (1 << SW5_BIT);    /* 풀업 */
+    DDRE  &= ~((1 << SW2_BIT) | (1 << SW3_BIT) | (1 << SW4_BIT) | (1 << SW5_BIT));
+    PORTE |=  (1 << SW2_BIT) | (1 << SW3_BIT) | (1 << SW4_BIT) | (1 << SW5_BIT);
+    LEDBAR_DDR = 0xFF;
+    ledbar(0);
     BUZZER_DDR |= (1 << BUZZER_BIT);
     buzzer(0);
 
     disp_init();
     xKeyQueue = xQueueCreate(8, sizeof(KeyEvent_t));
 
-    xTaskCreate(vDispTask,   "DISP", configMINIMAL_STACK_SIZE + 120, NULL, 4, NULL);
-    xTaskCreate(vKeyTask,    "KEY",  configMINIMAL_STACK_SIZE + 50,  NULL, 3, NULL);
-    xTaskCreate(vBuzzerTask, "BUZ",  configMINIMAL_STACK_SIZE + 40,  NULL, 3, &xBuzzerTask);
-    xTaskCreate(vAppTask,    "APP",  configMINIMAL_STACK_SIZE + 160, NULL, 2, NULL);
+    xTaskCreate(vFndTask,    "FND", configMINIMAL_STACK_SIZE + 40,  NULL, 4, NULL);
+    xTaskCreate(vKeyTask,    "KEY", configMINIMAL_STACK_SIZE + 50,  NULL, 3, NULL);
+    xTaskCreate(vBuzzerTask, "BUZ", configMINIMAL_STACK_SIZE + 40,  NULL, 3, &xBuzzerTask);
+    xTaskCreate(vAppTask,    "APP", configMINIMAL_STACK_SIZE + 160, NULL, 2, NULL);
+    xTaskCreate(vLcdTask,    "LCD", configMINIMAL_STACK_SIZE + 90,  NULL, 1, NULL);
 
     vTaskStartScheduler();
 

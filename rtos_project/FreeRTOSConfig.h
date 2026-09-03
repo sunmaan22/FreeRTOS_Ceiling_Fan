@@ -33,7 +33,7 @@
  *      - 흔한 국내 학습보드 : 16000000 (16 MHz)  또는 14745600 (14.7456 MHz)
  *  값이 틀리면 빌드는 되지만 tick(=시간) 이 안 맞습니다.
  *----------------------------------------------------------*/
-#define configCPU_CLOCK_HZ                       ( ( unsigned long ) 8000000 )  /* board.h F_CPU 와 동일하게! */
+#define configCPU_CLOCK_HZ                       ( ( unsigned long ) 16000000 )  /* board.h F_CPU 와 동일하게! */
 #define configTICK_RATE_HZ                       ( ( TickType_t ) 1000 )
 
 /* AVR(8bit) 이므로 16bit tick 사용.
