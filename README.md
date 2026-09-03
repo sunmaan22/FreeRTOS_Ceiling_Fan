@@ -17,7 +17,7 @@ prompt, built on **FreeRTOS Kernel V11.1.0** for the **ATmega128** (Atmel Studio
 |---|---|
 | **BASIC** | Adjust fan speed. An armed timer counts down in the background. |
 | **TIMER_SET** | Edit the timer value (minutes). |
-| **ALARM** | Countdown hit 0 → fan off, LED bar blinks, line 1 shows `*** TIME UP ***` for **3 s** (with a short melody), then returns to `Timer : OFF`. Any key skips. |
+| **ALARM** | Countdown hit 0 → fan off, LED bar blinks, line 1 shows `*** TIME UP ***` for **3 s** (with a short melody), then returns to `Timer : OFF`. The countdown shows `00:00:00` for one full second before this. Any key skips. |
 | **NIGHT** | CDS confirmed dark → LCD `GOOD NIGHT` + `OFF? SW4=Y SW5=N`. SW4 turns the fan off, SW5 (or 30 s timeout) keeps it running. After a trigger the sensor is **ignored for 1 hour**. |
 
 ### Controls
@@ -54,7 +54,7 @@ MCU: **ATmega128**, external **16 MHz** crystal, CKDIV8 fuse **off**.
 | LCD `RS` | **PG0** | |
 | LCD `R/W` | **PG1** | firmware holds it low (write‑only) |
 | LCD `E` | **PG2** | |
-| Buzzer | **PG3** | active‑high; **disabled in firmware** (`BUZZER_ENABLED 0`) |
+| Buzzer | **PG3** | active‑high, passive (tone-driven). `BUZZER_ENABLED` in `board.h` |
 | LED bar | **PORTB** `PB0..PB7` | `PB7` = bottom of bar, **active‑low** on this board |
 | FND segments `a..dp` | **PORTC** `PC0=a … PC7=dp` | common **anode** → segment ON = **LOW** |
 | FND digit select | **PD4** (leftmost) … **PD7** (rightmost) | digit ON = **HIGH** |
@@ -110,7 +110,7 @@ Key settings in `FreeRTOSConfig.h`:
 |---|:--:|---|---|---|
 | `vFndTask`    | **4** | `vTaskDelayUntil` 2 ms | `MIN+40`  | Multiplex the 4 FND digits from `s_seg[4]` (PORTC + PD4‑7). |
 | `vKeyTask`    | **3** | `vTaskDelayUntil` 10 ms | `MIN+50` | Sample PE4‑7, 3‑sample (30 ms) debounce, detect press edge + auto‑repeat, push `KeyEvent_t` to `xKeyQueue`. |
-| `vBuzzerTask` | **1** | blocks on notification | `MIN+40` | On alarm: play `LG_MELODY` (≈3 s, first phrases of "Twinkle Twinkle" — the tune the LG washer end-jingle is often likened to). **Buzzer output is muted** (`BUZZER_ENABLED 0`); the note timing still elapses. |
+| `vBuzzerTask` | **1** | blocks on notification | `MIN+40` | On alarm: play `ALARM_MELODY` (≈1.7 s, a "Voices of Spring" rising phrase — Samsung-appliance style) via `tone()` (~25% duty = quieter). Gated by `BUZZER_ENABLED`. |
 | `vAppTask`    | **2** | `xQueueReceive` (40 ms timeout) | `MIN+160` | The application: mode state machine, motor duty (`OCR3A`), 1‑second countdown, and building all display content. |
 | `vLcdTask`    | **1** | 60 ms, writes only on change | `MIN+90` | Render changed LCD rows to the HD44780 (PORTA + PG0/1/2). |
 | `vCdsTask`    | **1** | `vTaskDelayUntil` 1 s | `MIN+30` | Read ADC1 (PF1). Count consecutive "dark" seconds; after `CDS_DARK_CONFIRM` set `s_nightReq` and stop checking for `CDS_RECHECK_SEC` (1 h). |

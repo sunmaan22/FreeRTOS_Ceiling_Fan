@@ -56,21 +56,25 @@ static void motor_set(uint8_t step)
     OCR3A = (uint8_t)((uint16_t)step * 255u / 8u);
 }
 /* 한 음 재생. hz=0 은 쉼표. BUZZER_ENABLED 0 이면 소리 없이 시간만 소비.
- * (부저 활성 시엔 이 음 길이 동안 busy-wait 하므로 vBuzzerTask 는 낮은 우선순위) */
+ * 음량을 낮추려고 50% 사각파 대신 듀티 25% 펄스로 구동.
+ * (부저 활성 시엔 음 길이 동안 busy-wait → vBuzzerTask 는 낮은 우선순위) */
 static void tone(uint16_t hz, uint16_t ms)
 {
 #if BUZZER_ENABLED
     if (hz == 0) { vTaskDelay(pdMS_TO_TICKS(ms)); return; }
     {
-        uint16_t half  = (uint16_t)(500000UL / hz);            /* 반주기 us */
-        uint16_t loops = (uint16_t)(half << 2);                /* @16MHz: _delay_loop_2 4cyc → 1us=4 */
-        uint16_t n     = (uint16_t)((uint32_t)hz * ms / 1000u);
+        uint16_t period = (uint16_t)(1000000UL / hz);          /* 주기 us */
+        uint32_t full   = (uint32_t)period * 4u;               /* @16MHz: _delay_loop_2 = 4cyc/iter */
+        uint16_t hi     = (uint16_t)(full / 4u);               /* on  = 25%  (음량↓) */
+        uint16_t lo     = (uint16_t)(full - hi);               /* off = 75% */
+        uint16_t n      = (uint16_t)((uint32_t)hz * ms / 1000u);
         uint16_t i;
         for (i = 0; i < n; i++)
         {
-            BUZZER_PORT |=  (1 << BUZZER_BIT); _delay_loop_2(loops);
-            BUZZER_PORT &= ~(1 << BUZZER_BIT); _delay_loop_2(loops);
+            BUZZER_PORT |=  (1 << BUZZER_BIT); _delay_loop_2(hi);
+            BUZZER_PORT &= ~(1 << BUZZER_BIT); _delay_loop_2(lo);
         }
+        BUZZER_PORT &= ~(1 << BUZZER_BIT);
     }
 #else
     (void)hz;
@@ -78,13 +82,13 @@ static void tone(uint16_t hz, uint16_t ms)
 #endif
 }
 
-/* LG 세탁기 종료음 느낌 (첫 두 소절 "반짝반짝 작은별" 근사, 약 3초).
- * {주파수Hz, 길이ms}. C5=523 D5=587 E5=659 F5=698 G5=784 A5=880 */
-static const uint16_t LG_MELODY[][2] = {
-    {523,180},{523,180},{784,180},{784,180},{880,180},{880,180},{784,360},
-    {698,180},{698,180},{659,180},{659,180},{587,180},{587,180},{523,420},
+/* 삼성 세탁기 종료음 느낌 ("봄의 소리 왈츠" 도입부 상승 프레이즈 근사, 약 1.7초).
+ * {주파수Hz, 길이ms}.  G4=392 C5=523 D5=587 E5=659 F5=698 G5=784 */
+static const uint16_t ALARM_MELODY[][2] = {
+    {392,140},{523,140},{659,140},{587,140},{523,140},{587,280},
+    {659,140},{698,140},{784,420},
 };
-#define LG_MELODY_LEN  ((uint8_t)(sizeof(LG_MELODY) / sizeof(LG_MELODY[0])))
+#define ALARM_MELODY_LEN  ((uint8_t)(sizeof(ALARM_MELODY) / sizeof(ALARM_MELODY[0])))
 static void ledbar(uint8_t n)              /* PB7 부터 아래로 n칸 */
 {
     uint8_t mask;
@@ -363,9 +367,9 @@ static void vBuzzerTask(void *pv)
     for (;;)
     {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);   /* 알람 시작 알림 */
-        for (i = 0; i < LG_MELODY_LEN; i++)
+        for (i = 0; i < ALARM_MELODY_LEN; i++)
         {
-            tone(LG_MELODY[i][0], LG_MELODY[i][1]);
+            tone(ALARM_MELODY[i][0], ALARM_MELODY[i][1]);
             tone(0, 15);                           /* 음 사이 짧은 쉼 */
             taskYIELD();                           /* 다른 태스크 숨통 */
         }
@@ -410,12 +414,16 @@ static void vAppTask(void *pv)
             {
                 msAcc = (uint16_t)(msAcc - configTICK_RATE_HZ);
 
-                /* 카운트다운 (BASIC / NIGHT 에서 계속) */
-                if (s_armed && s_remain > 0 &&
-                    (s_mode == MODE_BASIC || s_mode == MODE_NIGHT))
+                /* 카운트다운 (BASIC / NIGHT 에서 계속).
+                 * s_remain 이 0 이 되는 초에는 "00:00:00" 을 표시만 하고,
+                 * 그 다음 초에 알람 → 부저가 1초 먼저 울리던 문제 해결 */
+                if (s_armed && (s_mode == MODE_BASIC || s_mode == MODE_NIGHT))
                 {
-                    s_remain--;
-                    if (s_remain == 0)
+                    if (s_remain > 0)
+                    {
+                        s_remain--;
+                    }
+                    else
                     {
                         s_mode   = MODE_ALARM;
                         s_speed  = 0;
