@@ -4,7 +4,7 @@
  *  [BASIC]      SW2 팬 OFF / SW3 속도- / SW4 속도+ / SW5 타이머설정
  *  [TIMER_SET]  SW2 +10분(가속) / SW3 +1분(가속) / SW4 리셋 / SW5 확정→BASIC
  *  [ALARM]      카운트다운 0 → 팬 정지 + LED바 깜빡 + "TIME UP" 3초 표시
- *                 (LG 세탁기풍 멜로디, 부저는 board.h BUZZER_ENABLED 로 on/off) → BASIC
+ *                 (삼성 세탁기풍 멜로디, 부저는 board.h BUZZER_ENABLED 로 on/off) → BASIC
  *  [NIGHT]      CDS 가 N초 연속 어두움 확정 → "GOOD NIGHT" + 팬 끌지 확인
  *                 SW4(PE6) = 예(팬 OFF) / SW5(PE7) = 아니오 / 30초 무응답 = 아니오
  *                 확정 후 1시간 동안 CDS 재확인 안 함
@@ -41,6 +41,7 @@ static uint8_t  s_speed    = 0;           /* 0..8 */
 static uint16_t s_totalMin = 0;           /* 타이머 설정값 (분, 0~9999) */
 static volatile uint8_t  s_armed = 0;
 static uint32_t s_remain  = 0;            /* 남은 초 */
+static uint8_t  s_alarmSec = 0;           /* 알람 경과 초 (표시 분기용) */
 static volatile uint8_t  s_nightReq = 0;  /* vCdsTask → vAppTask : 야간모드 요청 */
 
 /* ================= 하드웨어 헬퍼 ================= */
@@ -155,7 +156,8 @@ static void update_display(uint8_t blink)
 
         if (s_mode == MODE_ALARM)
         {
-            const char *p = "*** TIME  UP ***";
+            /* 첫 1초는 "00:00:00" 을 그대로 보여준 뒤 문구로 전환 */
+            const char *p = (s_alarmSec <= 1) ? "Left 00:00:00" : "*** TIME  UP ***";
             for (i = 0; p[i]; i++) l1[i] = p[i];
         }
         else if (s_mode == MODE_TIMER_SET)
@@ -202,8 +204,9 @@ static void handle_key(const KeyEvent_t *e)
 
     if (s_mode == MODE_ALARM)
     {
-        s_armed = 0;
-        s_mode  = MODE_BASIC;
+        s_armed    = 0;
+        s_totalMin = 0;
+        s_mode     = MODE_BASIC;
         return;
     }
 
@@ -384,7 +387,6 @@ static void vAppTask(void *pv)
     uint16_t   msAcc = 0;
     uint16_t   blinkCnt = 0;
     uint8_t    nightSec = 0;
-    uint8_t    alarmSec = 0;
 
     (void)pv;
 
@@ -414,30 +416,33 @@ static void vAppTask(void *pv)
             {
                 msAcc = (uint16_t)(msAcc - configTICK_RATE_HZ);
 
-                /* 카운트다운 (BASIC / NIGHT 에서 계속).
-                 * s_remain 이 0 이 되는 초에는 "00:00:00" 을 표시만 하고,
-                 * 그 다음 초에 알람 → 부저가 1초 먼저 울리던 문제 해결 */
-                if (s_armed && (s_mode == MODE_BASIC || s_mode == MODE_NIGHT))
+                /* 카운트다운 : s_remain 이 "진짜" 1→0 으로 내려갈 때만 알람.
+                 * (armed && remain==0 만으로 발동하면 임의로 부저가 울림) */
+                if (s_armed && s_remain > 0 &&
+                    (s_mode == MODE_BASIC || s_mode == MODE_NIGHT))
                 {
-                    if (s_remain > 0)
-                    {
-                        s_remain--;
-                    }
-                    else
+                    s_remain--;
+                    if (s_remain == 0)
                     {
                         s_mode   = MODE_ALARM;
                         s_speed  = 0;
-                        alarmSec = 0;
+                        s_alarmSec = 0;
                         motor_set(0);
-                        xTaskNotifyGive(xBuzzerTask);
+                        /* 부저는 알람 1초 뒤 (00:00:00 을 먼저 보여준 뒤) */
                     }
                 }
 
-                /* 알람 "TIME UP" 3초 표시 후 → BASIC (Timer:OFF) */
-                if (s_mode == MODE_ALARM && ++alarmSec >= 3)
+                /* 알람 : 1초간 "00:00:00" → 이후 "TIME UP" + 부저 → 총 4초 뒤 Timer:OFF */
+                if (s_mode == MODE_ALARM)
                 {
-                    s_armed = 0;
-                    s_mode  = MODE_BASIC;
+                    s_alarmSec++;
+                    if (s_alarmSec == 2) xTaskNotifyGive(xBuzzerTask);
+                    if (s_alarmSec >= 5)
+                    {
+                        s_armed    = 0;
+                        s_totalMin = 0;          /* 만료된 설정값 리셋 */
+                        s_mode     = MODE_BASIC;
+                    }
                 }
 
                 /* 야간모드 30초 무응답 → 아니오(그대로) */

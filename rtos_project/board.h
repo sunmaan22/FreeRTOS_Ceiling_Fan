@@ -36,7 +36,7 @@
 #define BUZZER_PORT            PORTG
 #define BUZZER_DDR             DDRG
 #define BUZZER_BIT             PG3
-#define BUZZER_ENABLED         1        /* 조용한 곳 코딩용. 소리 켜려면 1 */
+#define BUZZER_ENABLED         0        /* 조용한 곳 코딩용. 소리 켜려면 1 */
 
 /* ---------- LED 바 ---------- */
 #define LEDBAR_PORT            PORTB
