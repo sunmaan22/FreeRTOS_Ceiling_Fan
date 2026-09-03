@@ -189,13 +189,25 @@ static void handle_key(const KeyEvent_t *e)
         }
         motor_set(s_speed);
     }
-    else /* MODE_TIMER_SET : 총값 = 분 */
+    else /* MODE_TIMER_SET : 총값 = 분. 오래 누르면 증가폭 가속 */
     {
+        static uint8_t rep = 0, repKey = 0xFF;
+        uint16_t big;
+
+        if (e->type == KEV_PRESS)          rep = 0;
+        else if (e->sw == repKey)          { if (rep < 40) rep++; }
+        else                               rep = 0;
+        repKey = e->sw;
+
+        big = (rep >= 20) ? 100u : (rep >= 8) ? 10u : 1u;   /* 가속 배수 */
+
         switch (e->sw)
         {
-        case KEY_SW2: s_totalMin += 10; if (s_totalMin > 9999) s_totalMin = 0; break;
-        case KEY_SW3: s_totalMin += 1;  if (s_totalMin > 9999) s_totalMin = 0; break;
-        case KEY_SW4: s_totalMin = 0;   break;
+        case KEY_SW2: s_totalMin = (uint16_t)(s_totalMin + 10u * big);
+                      if (s_totalMin > 9999) s_totalMin = 0; break;
+        case KEY_SW3: s_totalMin = (uint16_t)(s_totalMin + big);
+                      if (s_totalMin > 9999) s_totalMin = 0; break;
+        case KEY_SW4: s_totalMin = 0; rep = 0; break;
         case KEY_SW5:
             if (e->type == KEV_PRESS)
             {

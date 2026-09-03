@@ -41,7 +41,7 @@
 /* ---------- LED 바 ---------- */
 #define LEDBAR_PORT            PORTB
 #define LEDBAR_DDR             DDRB
-#define LEDBAR_ACTIVE_HIGH     1        /* PBx=1 → LED on. 반대면 0 */
+#define LEDBAR_ACTIVE_HIGH     0        /* 이 보드: PBx=0 → LED on (active-low) */
 
 /* ---------- FND ---------- */
 #define FND_SEG_PORT           PORTC
