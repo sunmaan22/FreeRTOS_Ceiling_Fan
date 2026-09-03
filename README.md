@@ -5,8 +5,7 @@
 **"타이머를 걸어두고 잠들면, 알아서 꺼주는 똑똑한 선풍기"**
 
 FreeRTOS 위에서 도는 ATmega128 선풍기 컨트롤러입니다. 9단 PWM 팬 속도 조절,
-초 단위 카운트다운 타이머, 조도센서 기반 **야간 모드**(어두워지면 "끌까요?" 라고 물어봄),
-그리고 삼성 세탁기풍 종료 멜로디까지 — 6개의 태스크가 각자 맡은 일을 하며 협력합니다.
+초 단위 카운트다운 타이머, 조도센서 기반 **야간 모드** — 6개의 태스크가 각자 맡은 일을 하며 협력합니다.
 
 [![FreeRTOS](https://img.shields.io/badge/FreeRTOS-V11.1.0-52B043?style=flat-square&logo=freertos&logoColor=white)](https://www.freertos.org/)
 [![MCU](https://img.shields.io/badge/MCU-ATmega128-03234B?style=flat-square&logo=arm&logoColor=white)](https://www.microchip.com/en-us/product/atmega128)
