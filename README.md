@@ -2,9 +2,9 @@
 
 # 🌀 RTOS Ceiling Fan — ATmega128 실링팬 컨트롤러
 
-**"타이머를 걸어두고 잠들면, 알아서 꺼주는 똑똑한 선풍기"**
+**"타이머를 걸어두고 잠들면, 알아서 꺼주는 똑똑한 실링팬"**
 
-FreeRTOS 위에서 도는 ATmega128 선풍기 컨트롤러입니다. 9단 PWM 팬 속도 조절,
+FreeRTOS 위에서 도는 ATmega128 실링팬 컨트롤러입니다. 9단 PWM 팬 속도 조절,
 초 단위 카운트다운 타이머, 조도센서 기반 **야간 모드** — 6개의 태스크가 각자 맡은 일을 하며 협력합니다.
 
 [![FreeRTOS](https://img.shields.io/badge/FreeRTOS-V11.1.0-52B043?style=flat-square&logo=freertos&logoColor=white)](https://www.freertos.org/)
@@ -40,7 +40,7 @@ FreeRTOS 위에서 도는 ATmega128 선풍기 컨트롤러입니다. 9단 PWM �
 ## 📖 개요
 
 교육용 ATmega128 보드(7세그먼트·캐릭터 LCD·LED 바·스위치·PWM 모터·부저·CDS)를
-그대로 활용해, **선풍기 + 취침 타이머 + 조도 기반 자동 종료**를 하나의 RTOS 애플리케이션으로 구현했습니다.
+그대로 활용해, **실링팬 + 취침 타이머 + 조도 기반 자동 종료**를 하나의 RTOS 애플리케이션으로 구현했습니다.
 
 - 🌬️ **9단 PWM 팬** — OC3A(Timer3) 8비트 Fast PWM, 속도에 비례한 duty
 - ⏱️ **초 단위 타이머** — 분(0~9999)으로 설정, `HH:MM:SS`로 카운트다운, 0이 되면 팬 정지 + 알람
