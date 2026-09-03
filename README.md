@@ -139,7 +139,7 @@ flowchart LR
 
 | 태스크 | 우선순위 | 주기 | 스택 | 역할 |
 |---|:--:|---|---|---|
-| `vFndTask`    | **4** | `vTaskDelayUntil` 2 ms | `MIN+40`  | `s_seg[4]` 를 FND 4자리로 고속 멀티플렉싱 (PORTC + PD4~7) |
+| `vFndTask`    | **4** | `vTaskDelayUntil` 2 ms | `MIN+40`  | `s_seg[4]` 를 FND 4자리("NLEV")로 고속 멀티플렉싱 (PORTC + PD4~7) |
 | `vKeyTask`    | **3** | `vTaskDelayUntil` 10 ms | `MIN+50` | PE4~7 샘플링, 3샘플(30 ms) 디바운스, 눌림 엣지 + 오토리핏 → `xKeyQueue` |
 | `vBuzzerTask` | **1** | 태스크 알림 대기 | `MIN+40` | 알람 시 `ALARM_MELODY`(≈1.7 s) 재생. `tone()`(듀티 25 % = 저음량). `BUZZER_ENABLED` 로 on/off |
 | `vAppTask`    | **2** | `xQueueReceive` (40 ms 타임아웃) | `MIN+160` | 모드 상태 머신, 모터 duty, 1초 카운트다운, FND/LED/LCD 내용 생성 |
@@ -212,7 +212,7 @@ stateDiagram-v2
 
 | 출력 | BASIC / NIGHT | 카운트다운 중 | TIMER_SET | ALARM |
 |---|---|---|---|---|
-| **FND** (4자리) | `   N` — **항상 팬 속도만** | `   N` | `   N` | `   N` |
+| **FND** (4자리) | `NLEV` — **항상 팬 속도 단계** (예: `3LEV`) | `NLEV` | `NLEV` | `NLEV` |
 | **LED 바** (PB0~7) | 속도 1~8 (PB7부터 채움) | 속도 1~8 | 속도 1~8 | 전체 *깜빡* |
 | **LCD 1행** | `RTOS Ceiling Fan` (NIGHT: `GOOD NIGHT`) | `RTOS Ceiling Fan` | `RTOS Ceiling Fan` | `RTOS Ceiling Fan` |
 | **LCD 2행** | `Timer : OFF` (NIGHT: `OFF? SW4=Y SW5=N`) | `Left HH:MM:SS` | `Set  HH:MM:SS` | `Left 00:00:00`(1초) → `*** TIME UP ***` |

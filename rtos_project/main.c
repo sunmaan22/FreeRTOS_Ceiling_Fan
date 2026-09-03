@@ -131,9 +131,9 @@ static void update_display(uint8_t blink)
     for (i = 0; i < 16; i++) { l0[i] = ' '; l1[i] = ' '; }
     l0[16] = 0; l1[16] = 0;
 
-    /* ---------- FND : 풍속 숫자만 ---------- */
+    /* ---------- FND : 풍속 단계 "NLEV" ---------- */
     {
-        uint8_t s[4] = { FND_BLANK, FND_BLANK, FND_BLANK, fnd_font(s_speed) };
+        uint8_t s[4] = { fnd_font(s_speed), FND_L, FND_E, FND_V };
         fnd_set(s);
     }
 
