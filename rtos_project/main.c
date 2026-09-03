@@ -81,12 +81,17 @@ static void put2(char *b, uint8_t v)
     b[0] = (char)('0' + (v / 10) % 10);
     b[1] = (char)('0' + v % 10);
 }
-static void num4str(char *b, uint16_t v)
+
+/* "HH:MM:SS" (8글자) 를 b 에 기록 */
+static void hms(char *b, uint32_t sec)
 {
-    b[0] = (char)('0' + (v / 1000) % 10);
-    b[1] = (char)('0' + (v / 100)  % 10);
-    b[2] = (char)('0' + (v / 10)   % 10);
-    b[3] = (char)('0' + v % 10);
+    uint16_t h = (uint16_t)(sec / 3600u);
+    if (h > 99) h = 99;
+    put2(&b[0], (uint8_t)h);
+    b[2] = ':';
+    put2(&b[3], (uint8_t)((sec / 60u) % 60u));
+    b[5] = ':';
+    put2(&b[6], (uint8_t)(sec % 60u));
 }
 
 /* ================= 화면 갱신 ================= */
@@ -94,8 +99,6 @@ static void update_display(uint8_t blink)
 {
     char l0[17], l1[17];
     uint8_t i;
-    uint16_t remMin = (uint16_t)(s_remain / 60u);
-    uint8_t  remSec = (uint8_t)(s_remain % 60u);
 
     for (i = 0; i < 16; i++) { l0[i] = ' '; l1[i] = ' '; }
     l0[16] = 0; l1[16] = 0;
@@ -130,16 +133,15 @@ static void update_display(uint8_t blink)
         }
         else if (s_mode == MODE_TIMER_SET)
         {
-            const char *p = "Set  0000:00";
+            const char *p = "Set  00:00:00";           /* HH:MM:SS */
             for (i = 0; p[i]; i++) l1[i] = p[i];
-            num4str(&l1[5], s_totalMin);
+            hms(&l1[5], (uint32_t)s_totalMin * 60u);
         }
         else if (s_armed)
         {
-            const char *p = "Left 0000:00";
+            const char *p = "Left 00:00:00";
             for (i = 0; p[i]; i++) l1[i] = p[i];
-            num4str(&l1[5], remMin);
-            put2(&l1[10], remSec);
+            hms(&l1[5], s_remain);
         }
         else
         {

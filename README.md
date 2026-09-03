@@ -40,7 +40,7 @@ prompt, built on **FreeRTOS Kernel V11.1.0** for the **ATmega128** (Atmel Studio
 | **FND** (4 digit) | `   N` — **fan speed only, always** | `   N` | `   N` | `   N` |
 | **LED bar** (PB0–PB7) | speed 1–8 (fills from **PB7**) | speed 1–8 | speed 1–8 | all *(blink)* |
 | **LCD line 0** | `RTOS Ceiling Fan` (NIGHT: `GOOD NIGHT`) | `RTOS Ceiling Fan` | `RTOS Ceiling Fan` | `RTOS Ceiling Fan` |
-| **LCD line 1** | `Timer : OFF` (NIGHT: `OFF? SW4=Y SW5=N`) | `Left MMMM:SS` | `Set  MMMM:00` | `*** TIME  UP ***` |
+| **LCD line 1** | `Timer : OFF` (NIGHT: `OFF? SW4=Y SW5=N`) | `Left HH:MM:SS` | `Set  HH:MM:SS` | `*** TIME  UP ***` |
 
 ---
 
@@ -243,7 +243,7 @@ rtos_project/
 
 * Buzzer output is compiled out (`BUZZER_ENABLED 0`); the alarm *logic* still runs.
 * `heap_1`: no `vPortFree`; every task/queue is allocated once at boot.
-* Timer range: 0–9999 minutes; counted down and displayed as `MMMM:SS`.
+* Timer range: 0–9999 minutes; counted down and displayed as `HH:MM:SS`.
 * FND is common‑anode (`FND_SEG_ON_LOW 1`); digit select is active‑high
   (`FND_DIG_ACTIVE_LOW 0`); LED bar is active‑low (`LEDBAR_ACTIVE_HIGH 0`).
   Flip these in `board.h` for different modules.
@@ -251,3 +251,5 @@ rtos_project/
   `CDS_DARK_INVERT` (set to 1 if the divider makes *dark = higher* ADC),
   `CDS_DARK_CONFIRM` (dark seconds before triggering), `CDS_RECHECK_SEC`
   (lock-out after a trigger).
+  **These are currently set loose for testing** (`LEVEL 800`, `CONFIRM 2 s`,
+  `RECHECK 20 s`). Production suggestion: `300 / 5 s / 3600 s`.
