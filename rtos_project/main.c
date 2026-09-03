@@ -3,7 +3,8 @@
  *
  *  [BASIC]      SW2 팬 OFF / SW3 속도- / SW4 속도+ / SW5 타이머설정
  *  [TIMER_SET]  SW2 +10분(가속) / SW3 +1분(가속) / SW4 리셋 / SW5 확정→BASIC
- *  [ALARM]      카운트다운 0 → 팬 정지 + LED바 깜빡 → 아무 키 → BASIC
+ *  [ALARM]      카운트다운 0 → 팬 정지 + LED바 깜빡 + "TIME UP" 3초 표시
+ *                 (LG 세탁기풍 멜로디, 부저는 board.h BUZZER_ENABLED 로 on/off) → BASIC
  *  [NIGHT]      CDS 가 N초 연속 어두움 확정 → "GOOD NIGHT" + 팬 끌지 확인
  *                 SW4(PE6) = 예(팬 OFF) / SW5(PE7) = 아니오 / 30초 무응답 = 아니오
  *                 확정 후 1시간 동안 CDS 재확인 안 함
@@ -15,6 +16,7 @@
  */
 #include <avr/io.h>
 #include <stdint.h>
+#include <util/delay_basic.h>
 
 #include "FreeRTOS.h"
 #include "task.h"
@@ -53,15 +55,36 @@ static void motor_set(uint8_t step)
 {
     OCR3A = (uint8_t)((uint16_t)step * 255u / 8u);
 }
-static void buzzer(uint8_t on)
+/* 한 음 재생. hz=0 은 쉼표. BUZZER_ENABLED 0 이면 소리 없이 시간만 소비.
+ * (부저 활성 시엔 이 음 길이 동안 busy-wait 하므로 vBuzzerTask 는 낮은 우선순위) */
+static void tone(uint16_t hz, uint16_t ms)
 {
 #if BUZZER_ENABLED
-    if (on) BUZZER_PORT |=  (1 << BUZZER_BIT);
-    else    BUZZER_PORT &= ~(1 << BUZZER_BIT);
+    if (hz == 0) { vTaskDelay(pdMS_TO_TICKS(ms)); return; }
+    {
+        uint16_t half  = (uint16_t)(500000UL / hz);            /* 반주기 us */
+        uint16_t loops = (uint16_t)(half << 2);                /* @16MHz: _delay_loop_2 4cyc → 1us=4 */
+        uint16_t n     = (uint16_t)((uint32_t)hz * ms / 1000u);
+        uint16_t i;
+        for (i = 0; i < n; i++)
+        {
+            BUZZER_PORT |=  (1 << BUZZER_BIT); _delay_loop_2(loops);
+            BUZZER_PORT &= ~(1 << BUZZER_BIT); _delay_loop_2(loops);
+        }
+    }
 #else
-    (void)on;
+    (void)hz;
+    vTaskDelay(pdMS_TO_TICKS(ms));
 #endif
 }
+
+/* LG 세탁기 종료음 느낌 (첫 두 소절 "반짝반짝 작은별" 근사, 약 3초).
+ * {주파수Hz, 길이ms}. C5=523 D5=587 E5=659 F5=698 G5=784 A5=880 */
+static const uint16_t LG_MELODY[][2] = {
+    {523,180},{523,180},{784,180},{784,180},{880,180},{880,180},{784,360},
+    {698,180},{698,180},{659,180},{659,180},{587,180},{587,180},{523,420},
+};
+#define LG_MELODY_LEN  ((uint8_t)(sizeof(LG_MELODY) / sizeof(LG_MELODY[0])))
 static void ledbar(uint8_t n)              /* PB7 부터 아래로 n칸 */
 {
     uint8_t mask;
@@ -335,19 +358,18 @@ static void vKeyTask(void *pv)
 
 static void vBuzzerTask(void *pv)
 {
+    uint8_t i;
     (void)pv;
     for (;;)
     {
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        for (uint8_t i = 0; i < 5; i++)
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);   /* 알람 시작 알림 */
+        for (i = 0; i < LG_MELODY_LEN; i++)
         {
-            buzzer(1); vTaskDelay(pdMS_TO_TICKS(200));
-            buzzer(0); vTaskDelay(pdMS_TO_TICKS(200));
+            tone(LG_MELODY[i][0], LG_MELODY[i][1]);
+            tone(0, 15);                           /* 음 사이 짧은 쉼 */
+            taskYIELD();                           /* 다른 태스크 숨통 */
         }
-        taskENTER_CRITICAL();
-        s_armed = 0;
-        s_mode  = MODE_BASIC;
-        taskEXIT_CRITICAL();
+        /* 모드/타이머 해제는 vAppTask 의 3초 알람 타이머가 담당 */
     }
 }
 
@@ -358,6 +380,7 @@ static void vAppTask(void *pv)
     uint16_t   msAcc = 0;
     uint16_t   blinkCnt = 0;
     uint8_t    nightSec = 0;
+    uint8_t    alarmSec = 0;
 
     (void)pv;
 
@@ -394,11 +417,19 @@ static void vAppTask(void *pv)
                     s_remain--;
                     if (s_remain == 0)
                     {
-                        s_mode  = MODE_ALARM;
-                        s_speed = 0;
+                        s_mode   = MODE_ALARM;
+                        s_speed  = 0;
+                        alarmSec = 0;
                         motor_set(0);
                         xTaskNotifyGive(xBuzzerTask);
                     }
+                }
+
+                /* 알람 "TIME UP" 3초 표시 후 → BASIC (Timer:OFF) */
+                if (s_mode == MODE_ALARM && ++alarmSec >= 3)
+                {
+                    s_armed = 0;
+                    s_mode  = MODE_BASIC;
                 }
 
                 /* 야간모드 30초 무응답 → 아니오(그대로) */
@@ -419,15 +450,15 @@ int main(void)
     PORTE |=  (1 << SW2_BIT) | (1 << SW3_BIT) | (1 << SW4_BIT) | (1 << SW5_BIT);
     LEDBAR_DDR = 0xFF;
     ledbar(0);
-    BUZZER_DDR |= (1 << BUZZER_BIT);
-    buzzer(0);
+    BUZZER_DDR  |=  (1 << BUZZER_BIT);
+    BUZZER_PORT &= ~(1 << BUZZER_BIT);
 
     disp_init();
     xKeyQueue = xQueueCreate(8, sizeof(KeyEvent_t));
 
     xTaskCreate(vFndTask,    "FND", configMINIMAL_STACK_SIZE + 40,  NULL, 4, NULL);
     xTaskCreate(vKeyTask,    "KEY", configMINIMAL_STACK_SIZE + 50,  NULL, 3, NULL);
-    xTaskCreate(vBuzzerTask, "BUZ", configMINIMAL_STACK_SIZE + 40,  NULL, 3, &xBuzzerTask);
+    xTaskCreate(vBuzzerTask, "BUZ", configMINIMAL_STACK_SIZE + 40,  NULL, 1, &xBuzzerTask);
     xTaskCreate(vAppTask,    "APP", configMINIMAL_STACK_SIZE + 160, NULL, 2, NULL);
     xTaskCreate(vLcdTask,    "LCD", configMINIMAL_STACK_SIZE + 90,  NULL, 1, NULL);
     xTaskCreate(vCdsTask,    "CDS", configMINIMAL_STACK_SIZE + 30,  NULL, 1, NULL);

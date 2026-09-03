@@ -17,7 +17,7 @@ prompt, built on **FreeRTOS Kernel V11.1.0** for the **ATmega128** (Atmel Studio
 |---|---|
 | **BASIC** | Adjust fan speed. An armed timer counts down in the background. |
 | **TIMER_SET** | Edit the timer value (minutes). |
-| **ALARM** | Countdown hit 0 → fan off, LED bar blinks, LCD `*** TIME UP ***`. Any key → BASIC. |
+| **ALARM** | Countdown hit 0 → fan off, LED bar blinks, line 1 shows `*** TIME UP ***` for **3 s** (with a short melody), then returns to `Timer : OFF`. Any key skips. |
 | **NIGHT** | CDS confirmed dark → LCD `GOOD NIGHT` + `OFF? SW4=Y SW5=N`. SW4 turns the fan off, SW5 (or 30 s timeout) keeps it running. After a trigger the sensor is **ignored for 1 hour**. |
 
 ### Controls
@@ -110,7 +110,7 @@ Key settings in `FreeRTOSConfig.h`:
 |---|:--:|---|---|---|
 | `vFndTask`    | **4** | `vTaskDelayUntil` 2 ms | `MIN+40`  | Multiplex the 4 FND digits from `s_seg[4]` (PORTC + PD4‑7). |
 | `vKeyTask`    | **3** | `vTaskDelayUntil` 10 ms | `MIN+50` | Sample PE4‑7, 3‑sample (30 ms) debounce, detect press edge + auto‑repeat, push `KeyEvent_t` to `xKeyQueue`. |
-| `vBuzzerTask` | **3** | blocks on notification | `MIN+40` | On alarm: 5 × (200 ms on / 200 ms off) then disarm the timer. (Buzzer output muted.) |
+| `vBuzzerTask` | **1** | blocks on notification | `MIN+40` | On alarm: play `LG_MELODY` (≈3 s, first phrases of "Twinkle Twinkle" — the tune the LG washer end-jingle is often likened to). **Buzzer output is muted** (`BUZZER_ENABLED 0`); the note timing still elapses. |
 | `vAppTask`    | **2** | `xQueueReceive` (40 ms timeout) | `MIN+160` | The application: mode state machine, motor duty (`OCR3A`), 1‑second countdown, and building all display content. |
 | `vLcdTask`    | **1** | 60 ms, writes only on change | `MIN+90` | Render changed LCD rows to the HD44780 (PORTA + PG0/1/2). |
 | `vCdsTask`    | **1** | `vTaskDelayUntil` 1 s | `MIN+30` | Read ADC1 (PF1). Count consecutive "dark" seconds; after `CDS_DARK_CONFIRM` set `s_nightReq` and stop checking for `CDS_RECHECK_SEC` (1 h). |
@@ -251,5 +251,8 @@ rtos_project/
   `CDS_DARK_INVERT` (set to 1 if the divider makes *dark = higher* ADC),
   `CDS_DARK_CONFIRM` (dark seconds before triggering), `CDS_RECHECK_SEC`
   (lock-out after a trigger).
-  **These are currently set loose for testing** (`LEVEL 800`, `CONFIRM 2 s`,
-  `RECHECK 20 s`). Production suggestion: `300 / 5 s / 3600 s`.
+  Defaults: `LEVEL 300`, `CONFIRM 5 s`, `RECHECK 3600 s`. If night mode never
+  fires, try raising `LEVEL` or setting `CDS_DARK_INVERT 1`; if it false-fires
+  in normal room light, lower `LEVEL`.
+* **Alarm melody** (`LG_MELODY[]` in `main.c`): {frequency, ms} note table.
+  Total ≈3 s, matching the on-screen `*** TIME UP ***` hold.

@@ -43,15 +43,12 @@
 #define LEDBAR_DDR             DDRB
 #define LEDBAR_ACTIVE_HIGH     0        /* 이 보드: PBx=0 → LED on (active-low) */
 
-/* ---------- CDS 조도센서 (ADC1 = PF1) ----------
- *  ★ 지금은 테스트용으로 매우 널널하게 설정됨.
- *    실사용 값 예시:  LEVEL 300 , CONFIRM 5 , RECHECK 3600
- */
+/* ---------- CDS 조도센서 (ADC1 = PF1) ---------- */
 #define CDS_ADC_CH            1        /* ADC 채널 (PF1) */
-#define CDS_DARK_LEVEL        800      /* [TEST] ADC 이 값 미만이면 "어두움" (밝을수록 큰 값 가정) */
+#define CDS_DARK_LEVEL        300      /* ADC 이 값 미만이면 "어두움" (밝을수록 큰 값 배선 가정) */
 #define CDS_DARK_INVERT       0        /* 배선 반대(어두울수록 큰 값)면 1 */
-#define CDS_DARK_CONFIRM      2        /* [TEST] 연속 N초 어두우면 확정 */
-#define CDS_RECHECK_SEC       20       /* [TEST] 확정 후 재확인 금지 시간(초) */
+#define CDS_DARK_CONFIRM      5        /* 연속 N초 어두우면 확정 (디바운싱) */
+#define CDS_RECHECK_SEC       3600     /* 확정 후 이 시간(초) 동안 재확인 안 함 */
 
 /* ---------- FND ---------- */
 #define FND_SEG_PORT           PORTC
